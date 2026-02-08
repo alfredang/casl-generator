@@ -35,7 +35,7 @@ if "active_page" not in st.session_state:
     st.session_state["active_page"] = "Course Details"
 
 with st.sidebar:
-    st.title("CASL")
+    st.title("WSQ/CASL CP Generator")
 
     st.markdown("---")
     st.caption("PREPARE CP")
@@ -86,6 +86,9 @@ with st.sidebar:
                  type="primary" if st.session_state["active_page"] == "Lesson Plan" else "secondary"):
         st.session_state["active_page"] = "Lesson Plan"
         st.rerun()
+
+    st.markdown("---")
+    st.caption("Powered by Tertiary Infotech Academy Pte Ltd")
 
 active_page = st.session_state["active_page"]
 

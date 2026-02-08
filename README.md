@@ -4,6 +4,8 @@ A web application for preparing and submitting WSQ Course Proposal (CP) document
 
 Built for training providers working with the CASL (Course Accreditation and Standards for Learning) framework.
 
+![WSQ/CASL CP Generator](screenshot.png)
+
 ## Features
 
 ### Prepare CP (AI-Powered Content Generation)
