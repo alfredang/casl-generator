@@ -1,4 +1,4 @@
-# WSQ CASL CP Generator
+# WSQ and CASL Course Proposal (CP) Generator
 
 A web application for preparing and submitting WSQ Course Proposal (CP) documents. Uses AI (Claude Agent SDK) to generate professional course content and extracts structured data from Excel files to produce Word and PDF documents.
 
