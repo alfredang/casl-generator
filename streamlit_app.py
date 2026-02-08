@@ -1,3 +1,4 @@
+import re
 import tempfile
 from pathlib import Path
 
@@ -12,8 +13,10 @@ from app.ai_generator import (
     COURSE_TOPICS_PROMPT_TEMPLATE,
     INSTRUCTION_METHOD_PROMPT_TEMPLATE,
     LEARNING_OUTCOME_PROMPT_TEMPLATE,
+    LESSON_PLAN_PROMPT_TEMPLATE,
     INSTRUCTION_METHODS_LIST,
     UNIQUE_SKILL_NAMES_LIST,
+    SKILL_DESCRIPTIONS,
     JOB_ROLES_PROMPT_TEMPLATE,
     MINIMUM_ENTRY_REQUIREMENT_PROMPT_TEMPLATE,
     WHAT_YOULL_LEARN_PROMPT_TEMPLATE,
@@ -24,14 +27,15 @@ from app.ai_generator import (
     generate_course_topics,
     generate_instruction_method,
     generate_learning_outcomes,
+    generate_lesson_plan_content,
     generate_job_roles,
     generate_minimum_entry_requirement,
     generate_what_youll_learn,
 )
 from app.extractor import extract_data
-from app.generator_docx import generate_docx
-from app.generator_lesson_plan import generate_lesson_plan
-from app.generator_lesson_plan_pdf import generate_lesson_plan_pdf
+from app.generator_docx import generate_audit_report
+from app.generator_lesson_plan import generate_lesson_plan_table
+from app.generator_lesson_plan_pdf import generate_lesson_plan_pdf_table
 
 st.set_page_config(page_title="CASL Course Document Generator", page_icon="📄", layout="wide")
 
@@ -80,21 +84,25 @@ with st.sidebar:
 
     st.markdown("---")
     st.caption("SUBMIT CP")
-    if st.button("Entry Requirement", use_container_width=True,
-                 type="primary" if st.session_state["active_page"] == "Entry Requirement" else "secondary"):
-        st.session_state["active_page"] = "Entry Requirement"
+    if st.button("Course Outline", use_container_width=True,
+                 type="primary" if st.session_state["active_page"] == "Course Outline" else "secondary"):
+        st.session_state["active_page"] = "Course Outline"
+        st.rerun()
+    if st.button("Min Entry Requirements", use_container_width=True,
+                 type="primary" if st.session_state["active_page"] == "Min Entry Requirements" else "secondary"):
+        st.session_state["active_page"] = "Min Entry Requirements"
         st.rerun()
     if st.button("Job Roles", use_container_width=True,
                  type="primary" if st.session_state["active_page"] == "Job Roles" else "secondary"):
         st.session_state["active_page"] = "Job Roles"
         st.rerun()
-    if st.button("Course Outline", use_container_width=True,
-                 type="primary" if st.session_state["active_page"] == "Course Outline" else "secondary"):
-        st.session_state["active_page"] = "Course Outline"
-        st.rerun()
     if st.button("Lesson Plan", use_container_width=True,
                  type="primary" if st.session_state["active_page"] == "Lesson Plan" else "secondary"):
         st.session_state["active_page"] = "Lesson Plan"
+        st.rerun()
+    if st.button("CP Quality Audit", use_container_width=True,
+                 type="primary" if st.session_state["active_page"] == "CP Quality Audit" else "secondary"):
+        st.session_state["active_page"] = "CP Quality Audit"
         st.rerun()
 
     st.markdown("---")
@@ -158,21 +166,29 @@ if active_page == "Course Details":
 
     with st.expander("Generate Topics with AI", expanded=False):
         st.markdown("Auto-generate course topics based on the course title. You can edit the results afterwards.")
-        gen_num_topics = st.number_input(
-            "Number of topics to generate",
-            min_value=1,
-            value=st.session_state.get("saved_num_topics", 4),
-            step=1,
-            key="gen_num_topics",
-        )
+        saved_dur = st.session_state.get("saved_course_duration", 16)
+        num_days_est = max(1, saved_dur // 8)
+        max_topics = num_days_est * 3
+        st.caption(f"AI will recommend topics for **{num_days_est} day(s)** (max {max_topics} topics)")
         if st.button("Generate Topics", type="primary", use_container_width=True, key="gen_topics_btn"):
             if not course_title:
                 st.warning("Please enter a course title first.")
             else:
                 with st.spinner("Generating course topics..."):
                     try:
-                        result = generate_course_topics(course_title, gen_num_topics)
+                        # In CASL mode, look up the skill description for context
+                        skill_desc = ""
+                        if st.session_state.get("cp_mode") == "CASL":
+                            selected_skill = st.session_state.get("cd_unique_skill_name", "")
+                            skill_desc = SKILL_DESCRIPTIONS.get(selected_skill, "")
+                        result = generate_course_topics(
+                            course_title, num_days_est, skill_description=skill_desc,
+                        )
                         st.session_state["cd_course_topics"] = result
+                        # Auto-detect actual topic count from generated result
+                        generated_count = len(re.findall(r"^##\s*Topic\s*\d+", result, re.MULTILINE))
+                        if generated_count > 0:
+                            st.session_state["saved_num_topics"] = generated_count
                         st.rerun()
                     except Exception as e:
                         st.error(f"Failed to generate topics: {e}")
@@ -212,6 +228,7 @@ if active_page == "Course Details":
                 value=st.session_state.get("saved_num_topics", 4),
                 step=1,
             )
+        is_casl = st.session_state.get("cp_mode") == "CASL"
         col_instr, col_assess = st.columns(2)
         with col_instr:
             instructional_duration = st.number_input(
@@ -223,8 +240,8 @@ if active_page == "Course Details":
         with col_assess:
             assessment_duration = st.number_input(
                 "Assessment Duration (hrs)",
-                min_value=1,
-                value=st.session_state.get("saved_assessment_duration", 2),
+                min_value=0 if is_casl else 1,
+                value=st.session_state.get("saved_assessment_duration", 0 if is_casl else 2),
                 step=1,
             )
         col_num_instr, col_num_assess = st.columns(2)
@@ -238,8 +255,8 @@ if active_page == "Course Details":
         with col_num_assess:
             num_assess_methods = st.number_input(
                 "No. of Assessment Methods",
-                min_value=1,
-                value=st.session_state.get("saved_num_assess_methods", 2),
+                min_value=0 if is_casl else 1,
+                value=st.session_state.get("saved_num_assess_methods", 0 if is_casl else 2),
                 step=1,
             )
         selected_instr_methods = st.multiselect(
@@ -263,7 +280,7 @@ if active_page == "Course Details":
             st.warning("Please enter both a course title and course topics.")
         elif len(selected_instr_methods) != num_instr_methods:
             st.warning(f"Please select exactly {num_instr_methods} instruction method(s). You selected {len(selected_instr_methods)}.")
-        elif len(selected_assess_methods) != num_assess_methods:
+        elif num_assess_methods > 0 and len(selected_assess_methods) != num_assess_methods:
             st.warning(f"Please select exactly {num_assess_methods} assessment method(s). You selected {len(selected_assess_methods)}.")
         else:
             st.session_state["saved_course_title"] = course_title
@@ -275,7 +292,7 @@ if active_page == "Course Details":
             st.session_state["saved_num_instr_methods"] = num_instr_methods
             st.session_state["saved_num_assess_methods"] = num_assess_methods
             st.session_state["saved_instr_methods"] = selected_instr_methods
-            st.session_state["saved_assess_methods"] = selected_assess_methods
+            st.session_state["saved_assess_methods"] = selected_assess_methods if num_assess_methods > 0 else []
             if st.session_state.get("cp_mode") == "CASL":
                 st.session_state["saved_unique_skill_name"] = unique_skill_name
             if st.session_state.get("cp_mode") == "WSQ":
@@ -295,7 +312,7 @@ if active_page == "Course Details":
         instr_per_topic = saved_instr * 60 / saved_num_topics
         assess_per_topic = saved_assess * 60 / saved_num_topics
         instr_per_method = saved_instr * 60 / saved_num_instr
-        assess_per_method = saved_assess * 60 / saved_num_assess
+        assess_per_method = saved_assess * 60 / saved_num_assess if saved_num_assess > 0 else 0
 
         st.divider()
         st.markdown(f"## {saved_title}")
@@ -321,9 +338,9 @@ if active_page == "Course Details":
                 f"{instr_per_topic:.0f} mins",
                 str(saved_num_instr),
                 f"{instr_per_method:.0f} mins",
-                f"{saved_assess} hrs",
+                f"{saved_assess} hrs" if saved_num_assess > 0 else "N/A",
                 str(saved_num_assess),
-                f"{assess_per_method:.0f} mins",
+                f"{assess_per_method:.0f} mins" if saved_num_assess > 0 else "N/A",
             ],
         }
         st.dataframe(summary_data, use_container_width=True, hide_index=True)
@@ -708,7 +725,9 @@ elif active_page == "Assessment Methods":
         st.warning("Please enter course details first on the **Course Details** page.")
     else:
         saved_am = st.session_state.get("saved_assess_methods", [])
-        if not saved_am:
+        if not saved_am and st.session_state.get("saved_num_assess_methods", 1) == 0:
+            st.info("No assessment methods configured for this CASL course.")
+        elif not saved_am:
             st.warning("Please select assessment methods on the **Course Details** page first.")
         else:
             st.info(f"**Course:** {saved_title}")
@@ -768,10 +787,10 @@ elif active_page == "Assessment Methods":
                     st.code(text, language=None, wrap_lines=True)
 
 # ============================================================
-# PAGE: Entry Requirement
+# PAGE: Min Entry Requirements
 # ============================================================
-elif active_page == "Entry Requirement":
-    st.header("Minimum Entry Requirement")
+elif active_page == "Min Entry Requirements":
+    st.header("Min Entry Requirements")
 
     if not has_course_details:
         st.warning("Please enter course details first on the **Course Details** page.")
@@ -901,181 +920,567 @@ elif active_page == "Course Outline":
         saved_duration = st.session_state.get("saved_course_duration", 16)
         saved_num_topics = st.session_state.get("saved_num_topics", 4)
         duration_per_topic = saved_duration * 60 / saved_num_topics
-        all_topics = [t.strip() for t in saved_topics.split(",") if t.strip()]
-        main_topics = all_topics[:saved_num_topics]
         saved_im = st.session_state.get("saved_instr_methods", [])
 
-        info_lines = []
-        if main_topics:
-            info_lines.append("(1) The list of topics covered in this course")
-            for i, topic in enumerate(main_topics, 1):
-                info_lines.append(f"Topic {i}: {topic}")
+        # Extract topic names from markdown-formatted course topics
+        main_topics = re.findall(r"^##\s*Topic\s*\d+:\s*(.+)$", saved_topics, re.MULTILINE)
 
-        if saved_im:
-            info_lines.append("")
-            info_lines.append("(2) Instructional methods")
-            info_lines.append(", ".join(saved_im))
+        if st.button("Generate", type="primary", use_container_width=True, key="co_gen"):
+            info_lines = []
+            if main_topics:
+                info_lines.append("(1) The list of topics covered in this course")
+                for i, topic in enumerate(main_topics, 1):
+                    info_lines.append(f"T{i}: {topic}")
 
-        if main_topics:
-            info_lines.append("")
-            info_lines.append("(3) Duration for each topic")
-            for i, topic in enumerate(main_topics, 1):
-                info_lines.append(f"Topic {i}: {duration_per_topic:.0f}mins")
+            if saved_im:
+                info_lines.append("")
+                info_lines.append("(2) Instructional methods")
+                info_lines.append(", ".join(saved_im))
 
-        if info_lines:
-            st.code("\n".join(info_lines), language=None, wrap_lines=True)
+            if main_topics:
+                info_lines.append("")
+                info_lines.append("(3) Duration for each topic")
+                for i, topic in enumerate(main_topics, 1):
+                    info_lines.append(f"Topic {i}: {duration_per_topic:.0f}mins")
+
+            st.session_state["co_text"] = "\n".join(info_lines)
+
+        # --- Display Result ---
+        if st.session_state.get("co_text"):
+            st.divider()
+            st.code(st.session_state["co_text"], language=None, wrap_lines=True)
 
 # ============================================================
 # PAGE: Lesson Plan
 # ============================================================
 elif active_page == "Lesson Plan":
     st.header("Lesson Plan")
-    st.markdown("Upload a Course Planning Excel file to generate **Course Document** and **Lesson Plan** documents.")
 
-    uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"], help="Select the .xlsx course planning file")
+    if not has_course_details:
+        st.warning("Please enter course details first on the **Course Details** page.")
+    else:
+        st.info(f"**Course:** {saved_title}")
+        st.markdown(
+            "Generate a lesson plan from your course details. "
+            "Downloads are available as Word (.docx) and PDF (.pdf)."
+        )
 
-    if uploaded_file is not None:
-        st.success(f"**{uploaded_file.name}** uploaded ({uploaded_file.size / 1024:.0f} KB)")
+        # --- Collect course details ---
+        lp_duration = st.session_state.get("saved_course_duration", 16)
+        lp_instr_hrs = st.session_state.get("saved_instructional_duration", 14)
+        lp_assess_hrs = st.session_state.get("saved_assessment_duration", 2)
+        lp_num_topics = st.session_state.get("saved_num_topics", 4)
+        lp_im = st.session_state.get("saved_instr_methods", [])
+        lp_am = st.session_state.get("saved_assess_methods", [])
 
-        if st.button("Generate Documents", type="primary", use_container_width=True):
-            with st.spinner("Extracting data and generating documents..."):
-                with tempfile.TemporaryDirectory() as tmp_dir:
-                    tmp_path = Path(tmp_dir) / uploaded_file.name
-                    tmp_path.write_bytes(uploaded_file.getvalue())
+        main_topics = re.findall(r"^##\s*Topic\s*\d+:\s*(.+)$", saved_topics, re.MULTILINE)
+        num_topics = len(main_topics) if main_topics else lp_num_topics
 
-                    data = extract_data(tmp_path)
+        # --- AI prompt template ---
+        with st.expander("AI Prompt Template", expanded=False):
+            lp_prompt = st.text_area(
+                "Edit the prompt template used for AI generation.",
+                value=st.session_state.get("lp_prompt", LESSON_PLAN_PROMPT_TEMPLATE),
+                height=300,
+                key="lp_prompt_input",
+            )
+            st.session_state["lp_prompt"] = lp_prompt
 
-                    docx_path = Path(tmp_dir) / "output.docx"
-                    generate_docx(data, docx_path)
-                    docx_bytes = docx_path.read_bytes()
+        # --- Generate Buttons ---
+        col_gen, col_regen = st.columns([1, 1])
+        with col_gen:
+            lp_generate = st.button(
+                "Generate",
+                type="primary",
+                use_container_width=True,
+                key="lp_gen",
+            )
+        with col_regen:
+            lp_regenerate = st.button(
+                "Regenerate",
+                use_container_width=True,
+                key="lp_regen",
+            )
 
-                    lp_path = Path(tmp_dir) / "lesson_plan.docx"
-                    generate_lesson_plan(data, lp_path)
-                    lp_bytes = lp_path.read_bytes()
+        # --- Build schedule & generate documents ---
+        if lp_generate or lp_regenerate:
+            # --- Build schedule from course details ---
+            def _fmt_12h(mins: int) -> str:
+                h, m = divmod(mins, 60)
+                suffix = "AM" if h < 12 else "PM"
+                if h > 12:
+                    h -= 12
+                elif h == 0:
+                    h = 12
+                return f"{h}:{m:02d} {suffix}"
 
-                    lp_pdf_path = Path(tmp_dir) / "lesson_plan.pdf"
-                    generate_lesson_plan_pdf(data, lp_pdf_path)
-                    lp_pdf_bytes = lp_pdf_path.read_bytes()
+            DAY_START = 9 * 60          # 9:00 AM
+            DAY_END = 18 * 60           # 6:00 PM
+            LUNCH_START = 12 * 60 + 30  # 12:30 PM
+            LUNCH_END = 13 * 60 + 15    # 1:15 PM
+            LUNCH_MINS = 45
+            MIN_SESSION = 15  # min topic session length to avoid tiny splits
 
-                safe_name = data.particulars.course_title.replace(" ", "_")
+            num_days = max(1, lp_duration // 8)
+            instr_per_topic = (lp_instr_hrs * 60) // num_topics if num_topics else 0
+            assess_total_mins = lp_assess_hrs * 60
+            assess_start = DAY_END - assess_total_mins  # e.g. 4:00 PM
 
-                st.session_state["generated"] = True
-                st.session_state["docx_bytes"] = docx_bytes
-                st.session_state["lp_bytes"] = lp_bytes
-                st.session_state["lp_pdf_bytes"] = lp_pdf_bytes
-                st.session_state["safe_name"] = safe_name
-                st.session_state["data"] = data
+            schedule: dict[int, list[dict]] = {}
+            topic_idx = 0
+            carry = 0  # minutes of current topic already scheduled
 
-        # --- Show results if generated ---
-        if st.session_state.get("generated"):
-            data = st.session_state["data"]
-            safe_name = st.session_state["safe_name"]
-            docx_bytes = st.session_state["docx_bytes"]
-            lp_bytes = st.session_state["lp_bytes"]
-            lp_pdf_bytes = st.session_state["lp_pdf_bytes"]
+            for day in range(1, num_days + 1):
+                rows: list[dict] = []
+                current = DAY_START
+                is_last_day = (day == num_days)
+                lunch_done = False
 
+                while topic_idx < num_topics:
+                    # --- Handle barriers first ---
+                    if not lunch_done and current >= LUNCH_START:
+                        rows.append({
+                            "timing": f"{_fmt_12h(LUNCH_START)} - {_fmt_12h(LUNCH_END)}",
+                            "duration": f"{LUNCH_MINS} mins",
+                            "description": "Lunch Break",
+                            "methods": "",
+                        })
+                        current = LUNCH_END
+                        lunch_done = True
+                        continue
+                    if is_last_day and current >= assess_start:
+                        break
+                    if current >= DAY_END:
+                        break
+
+                    # --- Determine next barrier ---
+                    if not lunch_done:
+                        barrier = LUNCH_START
+                    elif is_last_day:
+                        barrier = assess_start
+                    else:
+                        barrier = DAY_END
+
+                    avail = barrier - current
+                    topic_remaining = instr_per_topic - carry
+
+                    if avail < MIN_SESSION:
+                        if not lunch_done and barrier == LUNCH_START:
+                            # Start lunch early to avoid tiny break next to lunch
+                            lunch_end = current + LUNCH_MINS
+                            rows.append({
+                                "timing": f"{_fmt_12h(current)} - {_fmt_12h(lunch_end)}",
+                                "duration": f"{LUNCH_MINS} mins",
+                                "description": "Lunch Break",
+                                "methods": "",
+                            })
+                            current = lunch_end
+                            lunch_done = True
+                        else:
+                            # Insert break before other barriers (assessment, day-end)
+                            if avail > 0:
+                                rows.append({
+                                    "timing": f"{_fmt_12h(current)} - {_fmt_12h(barrier)}",
+                                    "duration": f"{avail} mins",
+                                    "description": "Break",
+                                    "methods": "",
+                                })
+                            current = barrier
+                        continue
+
+                    topic_name = main_topics[topic_idx] if topic_idx < len(main_topics) else f"Topic {topic_idx + 1}"
+                    label = f"T{topic_idx + 1}: {topic_name}"
+                    if carry > 0:
+                        label += " (Cont'd)"
+
+                    methods_str = ", ".join(lp_im) if lp_im else ""
+
+                    if topic_remaining <= avail:
+                        # Topic fits completely before barrier
+                        end = current + topic_remaining
+                        rows.append({
+                            "timing": f"{_fmt_12h(current)} - {_fmt_12h(end)}",
+                            "duration": f"{topic_remaining} mins",
+                            "description": label,
+                            "methods": methods_str,
+                        })
+                        current = end
+                        carry = 0
+                        topic_idx += 1
+                    else:
+                        # Split topic at barrier
+                        rows.append({
+                            "timing": f"{_fmt_12h(current)} - {_fmt_12h(barrier)}",
+                            "duration": f"{avail} mins",
+                            "description": label,
+                            "methods": methods_str,
+                        })
+                        carry += avail
+                        current = barrier
+
+                # --- Fill remaining day structure after topics ---
+                if not lunch_done:
+                    if current < LUNCH_START:
+                        gap = LUNCH_START - current
+                        if gap > 0:
+                            rows.append({
+                                "timing": f"{_fmt_12h(current)} - {_fmt_12h(LUNCH_START)}",
+                                "duration": f"{gap} mins",
+                                "description": "Break",
+                                "methods": "",
+                            })
+                        current = LUNCH_START
+                    rows.append({
+                        "timing": f"{_fmt_12h(LUNCH_START)} - {_fmt_12h(LUNCH_END)}",
+                        "duration": f"{LUNCH_MINS} mins",
+                        "description": "Lunch Break",
+                        "methods": "",
+                    })
+                    current = LUNCH_END
+                    lunch_done = True
+
+                if is_last_day and assess_total_mins > 0:
+                    if current < assess_start:
+                        gap = assess_start - current
+                        rows.append({
+                            "timing": f"{_fmt_12h(current)} - {_fmt_12h(assess_start)}",
+                            "duration": f"{gap} mins",
+                            "description": "Break",
+                            "methods": "",
+                        })
+                    rows.append({
+                        "timing": f"{_fmt_12h(assess_start)} - {_fmt_12h(DAY_END)}",
+                        "duration": f"{assess_total_mins} mins",
+                        "description": f"Assessment: {', '.join(lp_am)}",
+                        "methods": "",
+                    })
+
+                schedule[day] = rows
+
+            # --- Generate documents ---
+            with st.spinner("Generating lesson plan documents..."):
+                try:
+                    with tempfile.TemporaryDirectory() as tmp_dir:
+                        docx_path = Path(tmp_dir) / "lesson_plan.docx"
+                        generate_lesson_plan_table(
+                            saved_title, lp_duration, lp_instr_hrs, lp_assess_hrs,
+                            schedule, docx_path,
+                            instructional_methods=lp_im,
+                        )
+                        st.session_state["lp_docx_bytes"] = docx_path.read_bytes()
+
+                        pdf_path = Path(tmp_dir) / "lesson_plan.pdf"
+                        generate_lesson_plan_pdf_table(
+                            saved_title, lp_duration, lp_instr_hrs, lp_assess_hrs,
+                            schedule, pdf_path,
+                            instructional_methods=lp_im,
+                        )
+                        st.session_state["lp_pdf_bytes"] = pdf_path.read_bytes()
+
+                    st.session_state["lp_generated"] = True
+                except Exception as e:
+                    st.error(f"Failed to generate documents: {e}")
+
+            # --- AI generation ---
+            with st.spinner("Generating lesson plan text with AI..."):
+                try:
+                    result = generate_lesson_plan_content(
+                        course_title=saved_title,
+                        course_topics=saved_topics,
+                        course_duration=lp_duration,
+                        instructional_duration=lp_instr_hrs,
+                        assessment_duration=lp_assess_hrs,
+                        instructional_methods=lp_im,
+                        assessment_methods=lp_am,
+                        prompt_template=st.session_state.get("lp_prompt"),
+                    )
+                    st.session_state["lp_text"] = result
+                except Exception as e:
+                    st.error(f"Failed to generate AI lesson plan: {e}")
+
+        # --- Downloads ---
+        if st.session_state.get("lp_generated"):
             st.divider()
             st.subheader("Downloads")
-
-            col1, col2, col3 = st.columns(3)
+            safe_name = saved_title.replace(" ", "_")
+            col1, col2 = st.columns(2)
             with col1:
                 st.download_button(
-                    label="Download Course Document (.docx)",
-                    data=docx_bytes,
-                    file_name=f"{safe_name}.docx",
+                    label="Download Lesson Plan (.docx)",
+                    data=st.session_state["lp_docx_bytes"],
+                    file_name=f"{safe_name}_Lesson_Plan.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     use_container_width=True,
                 )
             with col2:
                 st.download_button(
-                    label="Download Lesson Plan (.docx)",
-                    data=lp_bytes,
-                    file_name=f"{safe_name}_Lesson_Plan.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    use_container_width=True,
-                )
-            with col3:
-                st.download_button(
                     label="Download Lesson Plan (.pdf)",
-                    data=lp_pdf_bytes,
+                    data=st.session_state["lp_pdf_bytes"],
                     file_name=f"{safe_name}_Lesson_Plan.pdf",
                     mime="application/pdf",
                     use_container_width=True,
                 )
 
-            # --- Preview extracted data ---
+        # --- AI-Generated Text ---
+        if st.session_state.get("lp_text"):
             st.divider()
-            st.subheader("Extracted Data Preview")
+            st.markdown("**AI-Generated Lesson Plan:**")
+            st.code(st.session_state["lp_text"], language=None, wrap_lines=True)
 
-            with st.expander("Section 1: Course Particulars", expanded=True):
-                st.markdown(f"**Training Provider:** {data.particulars.training_provider}")
-                st.markdown(f"**Course Title:** {data.particulars.course_title}")
-                st.markdown(f"**Course Type:** {data.particulars.course_type}")
-                st.markdown(f"**Unique Skill:** {', '.join(data.particulars.unique_skill_names)}")
-                st.markdown("---")
-                st.markdown("**About This Course**")
-                st.text(data.particulars.about_course[:500] + ("..." if len(data.particulars.about_course) > 500 else ""))
-                st.markdown("**What You Will Learn**")
-                st.text(data.particulars.what_youll_learn[:500] + ("..." if len(data.particulars.what_youll_learn) > 500 else ""))
+# ============================================================
+# PAGE: CP Quality Audit
+# ============================================================
+elif active_page == "CP Quality Audit":
+    st.header("CP Quality Audit")
 
-            with st.expander("Section 2: Course Background"):
-                st.text(data.background.targeted_sectors[:500] + ("..." if len(data.background.targeted_sectors) > 500 else ""))
+    if not has_course_details:
+        st.warning("Please enter course details first on the **Course Details** page.")
+    else:
+        st.info(f"**Course:** {saved_title}")
+        st.markdown(
+            "Upload the Course Proposal Excel file to check consistency "
+            "against your saved course details. Any mismatches will be highlighted."
+        )
 
-            with st.expander("Section 3: Instructional Design"):
-                st.markdown("**Learning Outcomes**")
-                lo_rows = [
-                    {
-                        "Day": lo.day,
-                        "Duration (min)": lo.duration_minutes,
-                        "LO#": lo.lo_number,
-                        "Learning Outcome": lo.learning_outcome,
-                        "Topic": lo.topic,
-                    }
-                    for lo in data.learning_outcomes
-                ]
-                st.dataframe(lo_rows, use_container_width=True, hide_index=True)
+        uploaded_cp = st.file_uploader(
+            "Upload CP Excel file", type=["xlsx"],
+            help="Select the .xlsx Course Proposal file to audit",
+            key="cp_audit_upload",
+        )
 
-                st.markdown("**Instructional Methods**")
-                meth_rows = [
-                    {
-                        "Day": im.day,
-                        "Method": im.method,
-                        "Duration (min)": im.duration_minutes,
-                        "Mode": im.mode_of_training,
-                    }
-                    for im in data.instruction_methods
-                ]
-                st.dataframe(meth_rows, use_container_width=True, hide_index=True)
+        if uploaded_cp is not None:
+            st.success(f"**{uploaded_cp.name}** uploaded ({uploaded_cp.size / 1024:.0f} KB)")
 
-            with st.expander("Section 4: Assessment"):
-                assess_rows = [
-                    {
-                        "Day": am.day,
-                        "Mode": am.mode,
-                        "Duration (min)": am.duration_minutes,
-                        "Assessors": am.num_assessors,
-                        "Candidates": am.num_candidates,
-                    }
-                    for am in data.assessment_modes
-                ]
-                st.dataframe(assess_rows, use_container_width=True, hide_index=True)
+            if st.button("Run Audit", type="primary", use_container_width=True, key="cp_audit_btn"):
+                with st.spinner("Extracting data and running audit..."):
+                    try:
+                        with tempfile.TemporaryDirectory() as tmp_dir:
+                            tmp_path = Path(tmp_dir) / uploaded_cp.name
+                            tmp_path.write_bytes(uploaded_cp.getvalue())
+                            data = extract_data(tmp_path)
 
-            with st.expander("Summary"):
-                st.markdown("**Topics covered in this course:**")
-                for lo in data.learning_outcomes:
-                    st.markdown(f"- {lo.topic}")
+                        issues = []
+                        passes = []
 
-                st.markdown("")
-                unique_methods = list(dict.fromkeys(im.method for im in data.instruction_methods))
-                st.markdown(f"**Instructional methods:** {', '.join(unique_methods)}")
+                        # --- 1. Course Title ---
+                        if data.particulars.course_title.strip().lower() != saved_title.strip().lower():
+                            issues.append({
+                                "field": "Course Title",
+                                "expected": saved_title,
+                                "found": data.particulars.course_title,
+                            })
+                        else:
+                            passes.append("Course Title")
 
-                st.markdown("")
-                st.markdown("**Duration for each topic:**")
-                dur_rows = [{"Topic": lo.topic, "Duration (min)": lo.duration_minutes} for lo in data.learning_outcomes]
-                st.dataframe(dur_rows, use_container_width=True, hide_index=True)
+                        # --- 2. Unique Skill Name (CASL mode) ---
+                        if st.session_state.get("cp_mode") == "CASL":
+                            expected_usn = st.session_state.get("saved_unique_skill_name", "")
+                            cp_usn = ", ".join(data.particulars.unique_skill_names)
+                            if expected_usn and expected_usn.lower() not in cp_usn.lower():
+                                issues.append({
+                                    "field": "Unique Skill Name",
+                                    "expected": expected_usn,
+                                    "found": cp_usn,
+                                })
+                            else:
+                                passes.append("Unique Skill Name")
 
-                st.markdown("")
-                st.markdown(f"- **Total Course Duration:** {data.summary.total_course_duration}")
-                st.markdown(f"- **Total Instructional Duration:** {data.summary.total_instructional_duration}")
-                st.markdown(f"- **Total Assessment Duration:** {data.summary.total_assessment_duration}")
-                st.markdown(f"- **Mode of Training:** {data.summary.mode_of_training}")
+                        # --- 3. Number of Topics ---
+                        expected_num_topics = st.session_state.get("saved_num_topics", 0)
+                        cp_num_topics = len(data.learning_outcomes)
+                        if expected_num_topics != cp_num_topics:
+                            issues.append({
+                                "field": "Number of Topics",
+                                "expected": str(expected_num_topics),
+                                "found": str(cp_num_topics),
+                            })
+                        else:
+                            passes.append("Number of Topics")
+
+                        # --- 4. Topic Names ---
+                        main_topics = re.findall(
+                            r"^##\s*Topic\s*\d+:\s*(.+)$", saved_topics, re.MULTILINE
+                        )
+                        cp_topics = [lo.topic for lo in data.learning_outcomes]
+                        for i, expected_topic in enumerate(main_topics):
+                            expected_clean = expected_topic.strip().lower()
+                            found_in_cp = any(
+                                expected_clean in ct.lower() for ct in cp_topics
+                            )
+                            if not found_in_cp:
+                                issues.append({
+                                    "field": f"Topic {i + 1}",
+                                    "expected": expected_topic.strip(),
+                                    "found": cp_topics[i] if i < len(cp_topics) else "(missing)",
+                                })
+                        if not any(item["field"].startswith("Topic ") for item in issues):
+                            passes.append("Topic Names")
+
+                        # --- 5. Instructional Methods ---
+                        expected_im = set(
+                            m.lower() for m in st.session_state.get("saved_instr_methods", [])
+                        )
+                        cp_im = set(im.method.lower() for im in data.instruction_methods)
+                        missing_im = expected_im - cp_im
+                        extra_im = cp_im - expected_im
+                        if missing_im:
+                            issues.append({
+                                "field": "Instructional Methods (missing)",
+                                "expected": ", ".join(sorted(missing_im)),
+                                "found": "(not in CP)",
+                            })
+                        if extra_im:
+                            issues.append({
+                                "field": "Instructional Methods (extra in CP)",
+                                "expected": "(not selected)",
+                                "found": ", ".join(sorted(extra_im)),
+                            })
+                        if not missing_im and not extra_im:
+                            passes.append("Instructional Methods")
+
+                        # --- 6. Assessment Methods ---
+                        expected_am = set(
+                            m.lower() for m in st.session_state.get("saved_assess_methods", [])
+                        )
+                        cp_am = set(am.mode.lower() for am in data.assessment_modes)
+                        missing_am = expected_am - cp_am
+                        extra_am = cp_am - expected_am
+                        if missing_am:
+                            issues.append({
+                                "field": "Assessment Methods (missing)",
+                                "expected": ", ".join(sorted(missing_am)),
+                                "found": "(not in CP)",
+                            })
+                        if extra_am:
+                            issues.append({
+                                "field": "Assessment Methods (extra in CP)",
+                                "expected": "(not selected)",
+                                "found": ", ".join(sorted(extra_am)),
+                            })
+                        if not missing_am and not extra_am:
+                            passes.append("Assessment Methods")
+
+                        # --- 7. About This Course ---
+                        expected_about = st.session_state.get("about_course_text", "")
+                        if expected_about:
+                            cp_about = data.particulars.about_course.strip()
+                            if expected_about.strip()[:200].lower() != cp_about[:200].lower():
+                                issues.append({
+                                    "field": "About This Course",
+                                    "expected": expected_about[:100] + "...",
+                                    "found": cp_about[:100] + "..." if cp_about else "(empty)",
+                                })
+                            else:
+                                passes.append("About This Course")
+
+                        # --- 8. What You'll Learn ---
+                        expected_wyl = st.session_state.get("wyl_text", "")
+                        if expected_wyl:
+                            cp_wyl = data.particulars.what_youll_learn.strip()
+                            if expected_wyl.strip()[:200].lower() != cp_wyl[:200].lower():
+                                issues.append({
+                                    "field": "What You'll Learn",
+                                    "expected": expected_wyl[:100] + "...",
+                                    "found": cp_wyl[:100] + "..." if cp_wyl else "(empty)",
+                                })
+                            else:
+                                passes.append("What You'll Learn")
+
+                        # --- 9. Background Part A ---
+                        expected_bg = st.session_state.get("bg_text", "")
+                        if expected_bg:
+                            cp_bg = data.background.targeted_sectors.strip()
+                            if expected_bg.strip()[:200].lower() != cp_bg[:200].lower():
+                                issues.append({
+                                    "field": "Background Part A",
+                                    "expected": expected_bg[:100] + "...",
+                                    "found": cp_bg[:100] + "..." if cp_bg else "(empty)",
+                                })
+                            else:
+                                passes.append("Background Part A")
+
+                        # --- 10. Background Part B ---
+                        expected_bgb = st.session_state.get("bgb_text", "")
+                        if expected_bgb:
+                            cp_bgb = data.background.performance_gaps.strip()
+                            if expected_bgb.strip()[:200].lower() != cp_bgb[:200].lower():
+                                issues.append({
+                                    "field": "Background Part B",
+                                    "expected": expected_bgb[:100] + "...",
+                                    "found": cp_bgb[:100] + "..." if cp_bgb else "(empty)",
+                                })
+                            else:
+                                passes.append("Background Part B")
+
+                        st.session_state["audit_issues"] = issues
+                        st.session_state["audit_passes"] = passes
+                        st.session_state["audit_extracted_data"] = data
+
+                    except Exception as e:
+                        st.error(f"Failed to extract data from Excel: {e}")
+
+        # --- Display Audit Results ---
+        if st.session_state.get("audit_issues") is not None:
+            issues = st.session_state["audit_issues"]
+            passes = st.session_state["audit_passes"]
+
+            st.divider()
+
+            if not issues:
+                st.success(f"All {len(passes)} checks passed. No issues found.")
+            else:
+                st.error(f"{len(issues)} issue(s) found, {len(passes)} check(s) passed.")
+
+            # Show issues
+            if issues:
+                st.subheader("Issues")
+                for item in issues:
+                    with st.container(border=True):
+                        st.markdown(f"**{item['field']}**")
+                        col_exp, col_found = st.columns(2)
+                        with col_exp:
+                            st.markdown(f"Expected: `{item['expected']}`")
+                        with col_found:
+                            st.markdown(f"Found in CP: `{item['found']}`")
+
+            # Show passes
+            if passes:
+                with st.expander(f"Passed Checks ({len(passes)})", expanded=False):
+                    for p in passes:
+                        st.markdown(f"- {p}")
+
+            # --- Download Audit Report as Word Doc ---
+            audit_data = st.session_state.get("audit_extracted_data")
+            if audit_data is not None:
+                st.divider()
+                st.subheader("Download Audit Report")
+                st.markdown("Download a Word document with all key information extracted from the CP Excel.")
+
+                if st.button("Generate Audit Report", type="primary", use_container_width=True, key="audit_report_btn"):
+                    with st.spinner("Generating audit report..."):
+                        try:
+                            with tempfile.TemporaryDirectory() as tmp_dir:
+                                report_path = Path(tmp_dir) / "CP_Audit_Report.docx"
+                                generate_audit_report(
+                                    audit_data,
+                                    st.session_state.get("cp_mode", "CASL"),
+                                    report_path,
+                                    min_entry_req=st.session_state.get("mer_text", ""),
+                                    job_roles=st.session_state.get("jr_text", ""),
+                                    tsc_ref_code=st.session_state.get("saved_tsc_ref_code", ""),
+                                    tsc_title=st.session_state.get("saved_tsc_title", ""),
+                                    im_descriptions=st.session_state.get("im_results", {}),
+                                    am_descriptions=st.session_state.get("am_results", {}),
+                                )
+                                st.session_state["audit_report_bytes"] = report_path.read_bytes()
+                        except Exception as e:
+                            st.error(f"Failed to generate audit report: {e}")
+
+                if st.session_state.get("audit_report_bytes"):
+                    st.download_button(
+                        label="Download CP Audit Report (.docx)",
+                        data=st.session_state["audit_report_bytes"],
+                        file_name="CP_Audit_Report.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True,
+                    )

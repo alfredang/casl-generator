@@ -1,6 +1,31 @@
 import asyncio
+import csv
+from pathlib import Path
 
 from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock, ResultMessage
+
+_SKILLS_CSV = Path(__file__).resolve().parent.parent / ".claude" / "skills" / "generate_topics" / "skills_description.csv"
+
+
+def load_skills_data() -> tuple[list[str], dict[str, str]]:
+    """Load skill names and descriptions from the CSV.
+
+    Returns (names_list, descriptions_dict) where descriptions_dict maps
+    skill name -> description.
+    """
+    names: list[str] = []
+    descriptions: dict[str, str] = {}
+    with open(_SKILLS_CSV, encoding="utf-8", errors="replace") as f:
+        reader = csv.reader(f)
+        next(reader)  # skip header row 1 (title)
+        next(reader)  # skip header row 2 (S/N, Skill, Skills Description)
+        for row in reader:
+            if len(row) >= 3 and row[1].strip():
+                name = row[1].strip()
+                desc = row[2].strip()
+                names.append(name)
+                descriptions[name] = desc
+    return names, descriptions
 
 ABOUT_COURSE_PROMPT_TEMPLATE = """\
 You are an expert course description writer for professional training and \
@@ -530,11 +555,14 @@ continuing education programmes. Generate a structured list of course \
 topics with learning outcomes for the following course.
 
 Course Title: {course_title}
-Number of Topics: {num_topics}
-
+Course Duration: {num_days} day(s)
+Maximum Topics: {max_topics} (max 3 per day)
+{skill_context}
 Guidelines:
-- Generate exactly {num_topics} course topics that are directly relevant \
-to the course title
+- Generate the appropriate number of topics to comprehensively cover the \
+subject matter{skill_guideline}
+- You decide how many topics are needed — do NOT exceed {max_topics} topics \
+(max 3 per day for {num_days} day(s))
 - Each topic should represent a distinct, teachable module or unit
 - Topics should follow a logical learning progression (foundational to advanced)
 - Use concise, professional topic names (3-8 words each)
@@ -589,12 +617,38 @@ Respond with ONLY the formatted topics and learning outcomes, nothing else."""
 
 
 def generate_course_topics(
-    course_title: str, num_topics: int, prompt_template: str | None = None
+    course_title: str,
+    num_days: int,
+    prompt_template: str | None = None,
+    skill_description: str = "",
 ) -> str:
-    """Generate course topics using the Claude Agent SDK."""
+    """Generate course topics using the Claude Agent SDK.
+
+    The AI decides the appropriate number of topics to cover the subject,
+    constrained to max 3 topics per day.  When *skill_description* is
+    provided (CASL mode), it is injected so topics align with the official
+    CASL skill description.
+    """
     template = prompt_template or COURSE_TOPICS_PROMPT_TEMPLATE
+    max_topics = num_days * 3
+    if skill_description:
+        skill_context = (
+            f"\nCASL Skill Description (use this as context to generate relevant topics):\n"
+            f"{skill_description}\n"
+        )
+        skill_guideline = " and the CASL skill description above"
+    else:
+        skill_context = ""
+        skill_guideline = ""
     return asyncio.run(
-        _generate_async(template, course_title=course_title, num_topics=str(num_topics))
+        _generate_async(
+            template,
+            course_title=course_title,
+            num_days=str(num_days),
+            max_topics=str(max_topics),
+            skill_context=skill_context,
+            skill_guideline=skill_guideline,
+        )
     )
 
 
@@ -632,278 +686,106 @@ def generate_job_roles(
     )
 
 
-UNIQUE_SKILL_NAMES_LIST = [
-    "Accident and Incident Response Management",
-    "Agile Coaching",
-    "Ambulance Readiness and Maintenance",
-    "Analytical Method Validation",
-    "Arrestation",
-    "Artificial Intelligence Ethics and Governance",
-    "Arts Curriculum Design",
-    "Attractions Content and Experience Development and Delivery",
-    "Attractions Guest Relations Management",
-    "Attractions Membership, Admission and Ticketing Management",
-    "Audio Programming",
-    "Audit Compliance",
-    "Audit Frameworks",
-    "Auditing and Assurance Standards",
-    "Auditor Independence",
-    "Ballast System Design",
-    "Behavioural Economics in Design",
-    "Billing Procedure",
-    "Bulk Cargo Operations",
-    "Bus Fare Management",
-    "Bus Garaging",
-    "Business Innovation and Improvement",
-    "Business Requirements Mapping",
-    "Call Centre Management",
-    "Cargo and Receipt Inspection",
-    "Cargo Issuance and Dispatch",
-    "Case and Care Planning",
-    "Casework Evaluation",
-    "Category Management",
-    "Category Marketing",
-    "Channel Management",
-    "Civil Structure Maintenance",
-    "Client Assessment for Occupational Therapy",
-    "Client Assessment for Physiotherapy",
-    "Client Assessment for Speech Therapy",
-    "Clinical Governance",
-    "Clinical Supervision",
-    "Commodities Trading Management",
-    "Common Data Environment Management",
-    "Communication and Navigation System Design",
-    "Computer-aided Design",
-    "Computerised Systems Validation",
-    "Condition Monitoring",
-    "Condition-based Monitoring",
-    "Conflict Management",
-    "Content Acquisition Management",
-    "Content Commissioning",
-    "Content Development and Strategy",
-    "Content Distribution",
-    "Contract Administration and Management",
-    "Contract and Vendor Management",
-    "Contract Development and Management",
-    "Counselling Assessment",
-    "Creative Entrepreneurship",
-    "Credit Assessment",
-    "Crew Management",
-    "Cultural Sensitivity for Design",
-    "Customer Acquisition Management",
-    "Customer Service Innovation Management",
-    "Customisation and Localisation",
-    "Data and Information Visualisation",
-    "Data Collection and Analysis",
-    "Decarbonisation Consulting",
-    "Decarbonisation Project Development",
-    "Defect Density Monitoring",
-    "Design Concepts Generation",
-    "Design for Safety",
-    "Design Writing",
-    "Document Management for Pharmacy Support",
-    "Documentation",
-    "Documentation and Administration",
-    "Dry Dock Project Management",
-    "Electrical Engineering Management",
-    "Electrostatic Discharge Control",
-    "Empathetic Design",
-    "Engineering Contract Management",
-    "Engineering Drawing, Interpretation and Management",
-    "Engineering Safety and Security Standards",
-    "Engineering Safety Standards Interpretation",
-    "Engineering Support Management",
-    "Enterprise Database System Administration",
-    "Environment and Social Governance",
-    "Environment Impact Assessment",
-    "Environmental Management System Policies, Standards, Procedures and Practices Management",
-    "Equipment and Systems Testing",
-    "Equipment Drawing",
-    "Equipment Maintenance and Housekeeping",
-    "Evidence Management",
-    "Executive Protection",
-    "Financial Crime Laws and Regulations",
-    "Fleet Procurement",
-    "Food and Beverage Equipment Maintenance",
-    "Food and Beverage Production Management",
-    "Food Manufacturing Process Design",
-    "Gas Network System Management",
-    "Hazardous Materials Identification System (HMIS) Administration",
-    "Hazards and Risk Identification and Management",
-    "Heating, Ventilation and Air Conditioning System Design",
-    "Heavy Crane Vehicle Maintenance",
-    "High Speed Camera Operations",
-    "Hospitality Venue Inspection",
-    "House Brand Development",
-    "Human Resource Systems Management",
-    "Image Processing and Industrial Vision Inspection",
-    "Immersive Video Editing",
-    "Incident and Accident Investigation",
-    "Information Collection",
-    "Innovation",
-    "Integrated System Design and Application",
-    "Intellectual Property Commercialisation and Exploitation",
-    "Intellectual Property Enforcement",
-    "Intellectual Property in Research and Development",
-    "Intellectual Property Licencing",
-    "Intellectual Property Management",
-    "Intellectual Property Portfolio Management",
-    "Internal Controls",
-    "Internal Controls in Product Development",
-    "IT Asset Management",
-    "IT Standards",
-    "IT Strategy",
-    "Knowledge Management",
-    "Labour Relations Management",
-    "Landscape Tools, Equipment and Machinery Management",
-    "Learning Needs Analysis",
-    "Legal Writing",
-    "Lighting Operations",
-    "Loss and Risk Prevention Management",
-    "Maintenance Coordination",
-    "Maintenance Scheduling",
-    "Manpower Planning and Deployment",
-    "Manufacturing Workflow Management",
-    "Marine Design Customisation",
-    "Marine Engineering Calculations",
-    "Marine Incident and Accident Investigations",
-    "Marine Insurance Underwriting Profitability and Efficiency Management",
-    "Marine Survey Reporting",
-    "Maritime Emergency Response Management",
-    "Maritime Hazards Identification",
-    "Maritime Incident Management",
-    "Market Entry Strategy Formulation",
-    "Market Risk Management",
-    "Marketing Strategy Development",
-    "Material Qualification",
-    "Materials Qualification",
-    "Measurement of Building and Construction Works",
-    "Mechanical Engineering Management",
-    "Mechanical Maintenance Management",
-    "Media Data Management",
-    "Media Distribution Platform Management",
-    "Media Strategy Development",
-    "Medication Dispensing",
-    "Merchandise Performance Analysis",
-    "Metal Forming",
-    "Metrology Management",
-    "Mobile Equipment - Heavy Duty Prime Mover and Trailer Operations",
-    "Mobile Equipment - Prime Mover Defensive Driving",
-    "Multi-function Vehicle Maintenance",
-    "Narrative Design",
-    "Narrative Design in Product Development",
-    "Naval Architecture Calculations",
-    "Network Monitoring, Control and Supply Restoration",
-    "Network Simulation and Analysis",
-    "Network Systems Maintenance",
-    "Non-destructive Testing",
-    "Non-destructive Testing (Radiographic Inspection)",
-    "Novel Food Application",
-    "Nursing Research and Statistics",
-    "Operational Risk Management",
-    "Organisational Analysis Management",
-    "Patent Office Action and Infringements",
-    "Pest Control Site Assessment and Analysis",
-    "Pest Disposal Management",
-    "Plastic Injection Moulding",
-    "Policy Implementation and Revision",
-    "Port Call Planning",
-    "Portfolio Management",
-    "Power Plant Incident Investigation Management",
-    "Pricing Strategy",
-    "Process Optimisation",
-    "Process Validation",
-    "Procurement Coordination and Policy Development",
-    "Procurement Performance Monitoring",
-    "Product Costing and Pricing",
-    "Product Improvement",
-    "Product Lifecycle Management",
-    "Product Risk Assessment",
-    "Product Testing",
-    "Product, Content and Experience Performance Management",
-    "Production Budget Management",
-    "Production Operations",
-    "Production Planning and Scheduling",
-    "Productivity and Innovation Strategy",
-    "Productivity Optimisation for Food and Beverages Operations",
-    "Project Cost",
-    "Project Timeline",
-    "Prompt Engineering",
-    "Prop Design",
-    "Public Areas Housekeeping Operations Management",
-    "Qualitative Research",
-    "Quality Control and Assurance",
-    "Quality Improvement and Safe Practices",
-    "Radioactive Materials and Irradiating Apparatus Management",
-    "Regulatory Risk Assessment",
-    "Regulatory Submission and Clearance",
-    "Research Translation",
-    "Risk Advisory",
-    "Risk and Compliance Reporting",
-    "Risk and Crisis Management",
-    "Risk Compliance and Governance",
-    "Risk Management and Administration",
-    "Room Reservation Operations Management",
-    "Security Event Management",
-    "Set Design",
-    "Sheet Metal Structures Maintenance",
-    "Ship Cyber Security",
-    "Ship Maintenance and Repair (Dock)",
-    "Ship Propulsion Inspections",
-    "Ship Safety Management Systems Audit",
-    "Shipment Load Planning and Palletisation / Consolidation",
-    "Single Stack Medium Forklift Operations",
-    "Social Policy Evaluation",
-    "Social Service Programme Evaluation",
-    "Social Service Programme Implementation",
-    "Solid-State Device Engineering",
-    "Sound Design and Creation",
-    "Sound Editing",
-    "Sound Mixing",
-    "Staff Continuous Learning",
-    "Standard Operating Procedures Development",
-    "Store Facilities and Housekeeping",
-    "Structural Testing",
-    "Supplier Performance",
-    "Supplier Performance and Management",
-    "Supply Chain Solutioning / Modelling / Planning / Strategising",
-    "Sustainability Assurance",
-    "Sustainability Management",
-    "Sustainable Farming Practice Implementation",
-    "Switchboard Operations Management",
-    "Tax Advisory",
-    "Tax Compliance",
-    "Tax Controversy Management",
-    "Tax Risk Management",
-    "Taxation Laws",
-    "Technical Report Writing",
-    "Technical Sales Support",
-    "Technical Sound Design",
-    "Test Planning",
-    "Time-Sensitive Cargo Delivery Management",
-    "Tools Development",
-    "Total Rewards Philosophy Development",
-    "Tour and Travel Coordination, Ticketing and Reservations Management",
-    "Trade Mark Application",
-    "Trainer and Assessor Development Management",
-    "Transportation and Handover of Patient",
-    "Underwriting Process",
-    "Underwriting Profitability and Efficiency Management",
-    "Vendor and Partnership Management",
-    "Vendor Management",
-    "Vision Mixing",
-    "Volunteer Retention and Engagement",
-    "Waste Material Loading and Unloading Administration",
-    "Website Performance Management",
-    "Work in Biosafety Level-3 laboratories",
-    "Workflow Management",
-    "Workplace Optimisation",
-    "Workplace Safety and Health Culture Management",
-    "Workplace Traffic Safety Management",
-    "Writing of Advertising Copy for Broadcast and Interactive Media",
-    "Youth Development",
-    "Youth Outreach",
-]
+LESSON_PLAN_PROMPT_TEMPLATE = """\
+You are an expert instructional designer for professional training and \
+continuing education programmes. Generate a detailed day-by-day lesson plan \
+for the following course.
+
+Course Title: {course_title}
+
+Course Topics:
+{course_topics}
+
+Course Duration: {course_duration} hours ({num_days} day(s))
+Instructional Duration: {instructional_duration} hours
+Assessment Duration: {assessment_duration} hours
+Instructional Methods: {instructional_methods}
+Assessment Methods: {assessment_methods}
+
+Guidelines:
+- Create a day-by-day lesson plan with time slots from 9:00 AM to 6:00 PM
+- Include a 1-hour lunch break (typically 1:00 PM - 2:00 PM)
+- Distribute all topics across the available training days
+- For each time slot, include:
+  - Time range (e.g. 9:00 AM - 10:30 AM)
+  - Topic/session name
+  - Key learning points (2-3 bullet points)
+  - Instructional method used for that session
+- Include assessment sessions on the last day (or spread across days \
+if assessment duration is significant)
+- Use plain text format with clear headers for each day
+- Use bullet points (•) for learning points within each session
+- Separate each day with a blank line
+- Do NOT use markdown formatting (no #, **, etc.)
+- IMPORTANT: Ensure all topics from the course are covered
+
+Example format:
+
+Day 1 (9:00 AM - 6:00 PM)
+
+9:00 AM - 10:30 AM | Topic 1: Introduction to Business Innovation
+• Explain the evolution of business innovation
+• Describe key characteristics and applications
+• Identify opportunities for transformation
+Instructional Method: Interactive presentation
+
+10:30 AM - 12:30 PM | Topic 2: Agentic Vibe Coding
+• Apply intent-driven coding approaches
+• Design agentic solutions using low-code platforms
+• Evaluate agent performance metrics
+Instructional Method: Demonstrations / Modelling
+
+12:30 PM - 1:30 PM | Lunch Break
+
+1:30 PM - 3:30 PM | Topic 3: Workflow Design
+• Differentiate between agent architectures
+• Coordinate multi-agent collaboration
+• Integrate human-AI models
+Instructional Method: Case studies
+
+3:30 PM - 5:00 PM | Topic 4: Building AI Workforce
+• Explain role-based designs for AI workforce
+• Describe approaches to scaling agentic teams
+• Monitor AI workforce performance
+Instructional Method: Discussions
+
+5:00 PM - 6:00 PM | Assessment
+• Written Examination covering Day 1 topics
+Assessment Method: Written Exam
+
+Respond with ONLY the lesson plan text, nothing else."""
+
+
+def generate_lesson_plan_content(
+    course_title: str,
+    course_topics: str,
+    course_duration: int,
+    instructional_duration: int,
+    assessment_duration: int,
+    instructional_methods: list[str],
+    assessment_methods: list[str],
+    prompt_template: str | None = None,
+) -> str:
+    """Generate a lesson plan using the Claude Agent SDK."""
+    template = prompt_template or LESSON_PLAN_PROMPT_TEMPLATE
+    num_days = max(1, course_duration // 8)
+    return asyncio.run(
+        _generate_async(
+            template,
+            course_title=course_title,
+            course_topics=course_topics,
+            course_duration=str(course_duration),
+            num_days=str(num_days),
+            instructional_duration=str(instructional_duration),
+            assessment_duration=str(assessment_duration),
+            instructional_methods=", ".join(instructional_methods),
+            assessment_methods=", ".join(assessment_methods),
+        )
+    )
+
+
+UNIQUE_SKILL_NAMES_LIST, SKILL_DESCRIPTIONS = load_skills_data()
+
 
 
 INSTRUCTION_METHODS_LIST = [

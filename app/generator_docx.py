@@ -186,3 +186,168 @@ def generate_docx(data: ExtractedData, output_path: Path) -> Path:
 
     doc.save(str(output_path))
     return output_path
+
+
+def generate_audit_report(
+    data: ExtractedData,
+    cp_mode: str,
+    output_path: Path,
+    *,
+    min_entry_req: str = "",
+    job_roles: str = "",
+    tsc_ref_code: str = "",
+    tsc_title: str = "",
+    im_descriptions: dict[str, str] | None = None,
+    am_descriptions: dict[str, str] | None = None,
+) -> Path:
+    """Generate a Word doc summarising all key info extracted from the CP Excel."""
+    doc = Document()
+
+    style = doc.styles["Normal"]
+    style.font.name = "Arial"
+    style.font.size = Pt(11)
+    style.paragraph_format.space_after = Pt(6)
+
+    # Title
+    title = doc.add_heading("CP Audit Report", level=0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # --- Course Title ---
+    doc.add_heading("Course Title", level=2)
+    doc.add_paragraph(data.particulars.course_title)
+
+    _add_field(doc, "Training Provider", data.particulars.training_provider)
+    _add_field(doc, "Course Type", data.particulars.course_type)
+
+    # --- Unique Skill Names / TSC (mode-dependent) ---
+    if cp_mode == "CASL":
+        doc.add_heading("Unique Skill Names", level=2)
+        for usn in data.particulars.unique_skill_names:
+            doc.add_paragraph(f"- {usn}")
+    else:
+        doc.add_heading("TSC Reference", level=2)
+        if tsc_ref_code or tsc_title:
+            _add_field(doc, "TSC Reference Code", tsc_ref_code or "(not provided)")
+            _add_field(doc, "TSC Title", tsc_title or "(not provided)")
+        else:
+            doc.add_paragraph("(Not provided)")
+
+    # --- About This Course ---
+    _add_long_text(doc, "About This Course", data.particulars.about_course or "(Not found in CP)")
+
+    # --- What You'll Learn ---
+    _add_long_text(doc, "What You'll Learn", data.particulars.what_youll_learn or "(Not found in CP)")
+
+    # --- Background Part A ---
+    _add_long_text(
+        doc,
+        "Background Part A - Targeted Sectors",
+        data.background.targeted_sectors or "(Not found in CP)",
+    )
+
+    # --- Background Part B ---
+    _add_long_text(
+        doc,
+        "Background Part B - Performance Gaps",
+        data.background.performance_gaps or "(Not found in CP)",
+    )
+
+    # --- Minimum Entry Requirements ---
+    doc.add_heading("Minimum Entry Requirements", level=2)
+    if min_entry_req:
+        for para in min_entry_req.split("\n"):
+            stripped = para.strip()
+            if stripped:
+                doc.add_paragraph(stripped)
+    else:
+        doc.add_paragraph("(Not generated yet - use the Min Entry Requirements page)")
+
+    # --- Job Roles ---
+    doc.add_heading("Job Roles", level=2)
+    if job_roles:
+        for para in job_roles.split("\n"):
+            stripped = para.strip()
+            if stripped:
+                doc.add_paragraph(stripped)
+    else:
+        doc.add_paragraph("(Not generated yet - use the Job Roles page)")
+
+    # --- Learning Outcomes ---
+    doc.add_heading("Learning Outcomes", level=2)
+    if data.learning_outcomes:
+        lo_headers = ["Day", "LO#", "Topic", "Learning Outcome", "Duration (min)"]
+        table_lo = doc.add_table(rows=1, cols=len(lo_headers))
+        table_lo.style = "Table Grid"
+        _add_table_header(table_lo, lo_headers)
+        for lo in data.learning_outcomes:
+            row = table_lo.add_row()
+            row.cells[0].text = str(lo.day)
+            row.cells[1].text = lo.lo_number
+            row.cells[2].text = lo.topic
+            row.cells[3].text = lo.learning_outcome
+            row.cells[4].text = str(lo.duration_minutes)
+    else:
+        doc.add_paragraph("(Not found in CP)")
+
+    # --- Instructional Methods ---
+    doc.add_heading("Instructional Methods", level=2)
+    if data.instruction_methods:
+        im_headers = ["Day", "Method", "Duration (min)", "Mode of Training"]
+        table_im = doc.add_table(rows=1, cols=len(im_headers))
+        table_im.style = "Table Grid"
+        _add_table_header(table_im, im_headers)
+        for im in data.instruction_methods:
+            row = table_im.add_row()
+            row.cells[0].text = str(im.day)
+            row.cells[1].text = im.method
+            row.cells[2].text = str(im.duration_minutes)
+            row.cells[3].text = im.mode_of_training
+
+    if im_descriptions:
+        doc.add_paragraph()
+        for method, description in im_descriptions.items():
+            doc.add_heading(method, level=3)
+            for para in description.split("\n"):
+                stripped = para.strip()
+                if stripped:
+                    doc.add_paragraph(stripped)
+
+    if not data.instruction_methods and not im_descriptions:
+        doc.add_paragraph("(Not found in CP)")
+
+    # --- Assessment Methods ---
+    doc.add_heading("Assessment Methods", level=2)
+    if data.assessment_modes:
+        am_headers = ["Day", "Mode", "Duration (min)", "Assessors", "Candidates"]
+        table_am = doc.add_table(rows=1, cols=len(am_headers))
+        table_am.style = "Table Grid"
+        _add_table_header(table_am, am_headers)
+        for am in data.assessment_modes:
+            row = table_am.add_row()
+            row.cells[0].text = str(am.day)
+            row.cells[1].text = am.mode
+            row.cells[2].text = str(am.duration_minutes)
+            row.cells[3].text = str(am.num_assessors)
+            row.cells[4].text = str(am.num_candidates)
+
+    if am_descriptions:
+        doc.add_paragraph()
+        for method, description in am_descriptions.items():
+            doc.add_heading(method, level=3)
+            for para in description.split("\n"):
+                stripped = para.strip()
+                if stripped:
+                    doc.add_paragraph(stripped)
+
+    if not data.assessment_modes and not am_descriptions:
+        doc.add_paragraph("(Not found in CP)")
+
+    # --- Summary ---
+    doc.add_heading("Course Summary", level=2)
+    _add_field(doc, "Total Course Duration", data.summary.total_course_duration)
+    _add_field(doc, "Total Instructional Duration", data.summary.total_instructional_duration)
+    _add_field(doc, "Total Assessment Duration", data.summary.total_assessment_duration)
+    _add_field(doc, "Mode of Training", data.summary.mode_of_training)
+
+    doc.save(str(output_path))
+    return output_path

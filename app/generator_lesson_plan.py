@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from docx import Document
-from docx.shared import Pt, RGBColor
+from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from app.models import ExtractedData
@@ -171,6 +171,100 @@ def generate_lesson_plan(data: ExtractedData, output_path: Path) -> Path:
         for slot in schedule[day_num]:
             slot_text = f"{slot['start']} \u2013 {slot['end']} | {slot['label']}"
             doc.add_paragraph(slot_text)
+
+    doc.save(str(output_path))
+    return output_path
+
+
+def _set_header_cell(cell, text: str):
+    from docx.oxml.ns import qn
+    cell.text = ""
+    p = cell.paragraphs[0]
+    run = p.add_run(text)
+    run.bold = True
+    run.font.size = Pt(10)
+    run.font.color.rgb = RGBColor(255, 255, 255)
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    shading = cell._element.get_or_add_tcPr()
+    shading_elem = shading.makeelement(
+        qn("w:shd"), {qn("w:fill"): "4472C4", qn("w:val"): "clear"},
+    )
+    shading.append(shading_elem)
+
+
+def generate_lesson_plan_table(
+    course_title: str,
+    course_duration_hrs: int,
+    instructional_hrs: int,
+    assessment_hrs: int,
+    schedule: dict[int, list[dict]],
+    output_path: Path,
+    instructional_methods: list[str] | None = None,
+) -> Path:
+    """Generate a lesson plan .docx with 4-column table (Timing, Duration, Description, Methods)."""
+    doc = Document()
+
+    style = doc.styles["Normal"]
+    style.font.name = "Arial"
+    style.font.size = Pt(11)
+    style.paragraph_format.space_after = Pt(6)
+
+    # Title
+    title_para = doc.add_paragraph()
+    title_run = title_para.add_run(f"Lesson Plan: {course_title}")
+    title_run.bold = True
+    title_run.font.size = Pt(14)
+    title_run.font.name = "Arial"
+
+    # Metadata
+    num_days = len(schedule)
+    methods_text = ", ".join(instructional_methods) if instructional_methods else "N/A"
+    metadata = [
+        f"Course Duration: {course_duration_hrs} hrs / {num_days} Day(s) (9:00 AM - 6:00 PM daily)",
+        f"Total Instructional Hours: {instructional_hrs} hrs",
+        f"Total Assessment Hours: {assessment_hrs} hrs",
+        f"Instructional Methods: {methods_text}",
+    ]
+    for line in metadata:
+        p = doc.add_paragraph(line)
+        for run in p.runs:
+            run.font.name = "Arial"
+            run.font.size = Pt(11)
+        p.paragraph_format.space_after = Pt(2)
+
+    # Day tables
+    for day_num in sorted(schedule.keys()):
+        _add_colored_heading(doc, f"Day {day_num}")
+
+        rows = schedule[day_num]
+        table = doc.add_table(rows=1, cols=4)
+        table.style = "Table Grid"
+        # Disable autofit so column widths are fixed and text wraps
+        table.autofit = False
+        # Set column widths to use full page width (6.5" on Letter)
+        table.columns[0].width = Inches(1.3)
+        table.columns[1].width = Inches(0.9)
+        table.columns[2].width = Inches(2.0)
+        table.columns[3].width = Inches(2.3)
+
+        _set_header_cell(table.rows[0].cells[0], "Timing")
+        _set_header_cell(table.rows[0].cells[1], "Duration")
+        _set_header_cell(table.rows[0].cells[2], "Description")
+        _set_header_cell(table.rows[0].cells[3], "Instructional Methods")
+
+        col_widths = [Inches(1.3), Inches(0.9), Inches(2.0), Inches(2.3)]
+        for row_data in rows:
+            row = table.add_row()
+            for j, key in enumerate(("timing", "duration", "description", "methods")):
+                cell = row.cells[j]
+                cell.width = col_widths[j]
+                cell.text = ""
+                p = cell.paragraphs[0]
+                run = p.add_run(row_data.get(key, ""))
+                run.font.name = "Arial"
+                run.font.size = Pt(11)
+
+        doc.add_paragraph()
 
     doc.save(str(output_path))
     return output_path
