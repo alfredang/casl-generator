@@ -184,19 +184,22 @@ def generate_lesson_plan_pdf_table(
 
     Uses Helvetica (PDF equivalent of Arial), 11pt body / 14pt title.
     """
+    from fpdf.enums import TableBordersLayout
+    from fpdf.fonts import FontFace
+
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=20)
     pdf.add_page()
 
-    # Title (14pt)
+    # Title (14pt bold)
     pdf.set_font("Helvetica", "B", 14)
-    pdf.cell(0, 10, _sanitize(f"Lesson Plan: {course_title}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.multi_cell(0, 8, _sanitize(f"Lesson Plan: {course_title}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
 
-    # Metadata (11pt)
+    # Metadata (10pt)
     num_days = len(schedule)
     methods_text = ", ".join(instructional_methods) if instructional_methods else "N/A"
-    pdf.set_font("Helvetica", "", 11)
+    pdf.set_font("Helvetica", "", 10)
     meta = [
         f"Course Duration: {course_duration_hrs} hrs / {num_days} Day(s) (9:00 AM - 6:00 PM daily)",
         f"Total Instructional Hours: {instructional_hrs} hrs",
@@ -204,58 +207,45 @@ def generate_lesson_plan_pdf_table(
         f"Instructional Methods: {methods_text}",
     ]
     for line in meta:
-        pdf.cell(0, 6, _sanitize(line), new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(6)
+        pdf.multi_cell(0, 6, _sanitize(line), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
 
-    # 4 columns: Timing, Duration, Description, Instructional Methods
-    col_widths = [35, 22, 70, 63]  # total 190mm = full A4 usable width
+    # Table styling
+    col_widths = (30, 20, 75, 65)  # total 190mm = full A4 usable width
+    heading_style = FontFace(emphasis="BOLD", color=(255, 255, 255), fill_color=(68, 114, 196))
 
     for day_num in sorted(schedule.keys()):
         # Day heading
-        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_font("Helvetica", "BU", 12)
         pdf.set_text_color(*HEADING_COLOR)
         pdf.cell(0, 8, f"Day {day_num}", new_x="LMARGIN", new_y="NEXT")
         pdf.set_text_color(0, 0, 0)
-        pdf.ln(2)
+        pdf.ln(1)
 
-        # Table header
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.set_fill_color(68, 114, 196)
-        pdf.set_text_color(255, 255, 255)
-        pdf.cell(col_widths[0], 7, "Timing", border=1, fill=True)
-        pdf.cell(col_widths[1], 7, "Duration", border=1, fill=True)
-        pdf.cell(col_widths[2], 7, "Description", border=1, fill=True)
-        pdf.cell(col_widths[3], 7, "Instructional Methods", border=1, fill=True, new_x="LMARGIN", new_y="NEXT")
-
-        # Table rows (10pt)
+        # Build table using fpdf2 table API (handles text wrapping automatically)
         pdf.set_font("Helvetica", "", 10)
-        pdf.set_text_color(0, 0, 0)
-        row_h = 7
-        for row_data in schedule[day_num]:
-            x_start = pdf.get_x()
-            y_start = pdf.get_y()
-            # Draw first 3 cells as fixed-height
-            pdf.cell(col_widths[0], row_h, _sanitize(row_data["timing"]), border=0)
-            pdf.cell(col_widths[1], row_h, _sanitize(row_data["duration"]), border=0)
-            pdf.cell(col_widths[2], row_h, _sanitize(row_data["description"]), border=0)
-            # Draw methods column with multi_cell for text wrapping
-            x_methods = pdf.get_x()
-            pdf.multi_cell(col_widths[3], row_h, _sanitize(row_data.get("methods", "")), border=0)
-            y_end = pdf.get_y()
-            actual_row_h = max(row_h, y_end - y_start)
-            # Draw cell borders with actual row height
-            pdf.set_xy(x_start, y_start)
-            pdf.cell(col_widths[0], actual_row_h, "", border=1)
-            pdf.cell(col_widths[1], actual_row_h, "", border=1)
-            pdf.cell(col_widths[2], actual_row_h, "", border=1)
-            pdf.cell(col_widths[3], actual_row_h, "", border=1, new_x="LMARGIN", new_y="NEXT")
-            # Rewrite text in the first 3 cells
-            pdf.set_xy(x_start, y_start)
-            pdf.cell(col_widths[0], actual_row_h, _sanitize(row_data["timing"]), border=0)
-            pdf.cell(col_widths[1], actual_row_h, _sanitize(row_data["duration"]), border=0)
-            pdf.cell(col_widths[2], actual_row_h, _sanitize(row_data["description"]), border=0)
-            # Move cursor past this row
-            pdf.set_xy(x_start, y_start + actual_row_h)
+        with pdf.table(
+            col_widths=col_widths,
+            headings_style=heading_style,
+            first_row_as_headings=True,
+            line_height=pdf.font_size * 1.8,
+            text_align="LEFT",
+            v_align="TOP",
+        ) as table:
+            # Header row
+            header = table.row()
+            header.cell("Timing")
+            header.cell("Duration")
+            header.cell("Description")
+            header.cell("Instructional Methods")
+
+            # Data rows
+            for row_data in schedule[day_num]:
+                row = table.row()
+                row.cell(_sanitize(row_data["timing"]))
+                row.cell(_sanitize(row_data["duration"]))
+                row.cell(_sanitize(row_data["description"]))
+                row.cell(_sanitize(row_data.get("methods", "")))
 
         pdf.ln(4)
 

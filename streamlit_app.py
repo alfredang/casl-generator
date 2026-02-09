@@ -166,10 +166,33 @@ if active_page == "Course Details":
 
     with st.expander("Generate Topics with AI", expanded=False):
         st.markdown("Auto-generate course topics based on the course title. You can edit the results afterwards.")
+        # Show skill description context for CASL mode
+        if st.session_state.get("cp_mode") == "CASL":
+            selected_skill = st.session_state.get("cd_unique_skill_name", "")
+            skill_desc_preview = SKILL_DESCRIPTIONS.get(selected_skill, "")
+            if skill_desc_preview:
+                st.info(f"**Skill:** {selected_skill}\n\n**Description:** {skill_desc_preview[:300]}{'...' if len(skill_desc_preview) > 300 else ''}")
+            else:
+                st.warning(f"No skill description found for **{selected_skill}**. Topics will be generated based on the course title only.")
         saved_dur = st.session_state.get("saved_course_duration", 16)
-        num_days_est = max(1, saved_dur // 8)
+        default_days = max(1, saved_dur // 8)
+        num_days_est = st.number_input(
+            "No. of Days",
+            min_value=1,
+            value=default_days,
+            step=1,
+            key="gen_num_days",
+            help="Typically 2-3 topics per day",
+        )
+        special_req = st.text_area(
+            "Special Requirements (optional)",
+            value="",
+            height=80,
+            key="gen_special_req",
+            placeholder="e.g. Must include a topic on safety regulations, focus on hands-on practical skills, etc.",
+        )
         max_topics = num_days_est * 3
-        st.caption(f"AI will recommend topics for **{num_days_est} day(s)** (max {max_topics} topics)")
+        st.caption(f"AI will generate **2-3 topics per day** for **{num_days_est} day(s)** (max {max_topics} topics)")
         if st.button("Generate Topics", type="primary", use_container_width=True, key="gen_topics_btn"):
             if not course_title:
                 st.warning("Please enter a course title first.")
@@ -182,7 +205,9 @@ if active_page == "Course Details":
                             selected_skill = st.session_state.get("cd_unique_skill_name", "")
                             skill_desc = SKILL_DESCRIPTIONS.get(selected_skill, "")
                         result = generate_course_topics(
-                            course_title, num_days_est, skill_description=skill_desc,
+                            course_title, num_days_est,
+                            skill_description=skill_desc,
+                            special_requirements=special_req,
                         )
                         st.session_state["cd_course_topics"] = result
                         # Auto-detect actual topic count from generated result

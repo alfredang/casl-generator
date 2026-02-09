@@ -557,7 +557,7 @@ topics with learning outcomes for the following course.
 Course Title: {course_title}
 Course Duration: {num_days} day(s)
 Maximum Topics: {max_topics} (max 3 per day)
-{skill_context}
+{skill_context}{special_requirements}
 Guidelines:
 - Generate the appropriate number of topics to comprehensively cover the \
 subject matter{skill_guideline}
@@ -621,13 +621,15 @@ def generate_course_topics(
     num_days: int,
     prompt_template: str | None = None,
     skill_description: str = "",
+    special_requirements: str = "",
 ) -> str:
     """Generate course topics using the Claude Agent SDK.
 
     The AI decides the appropriate number of topics to cover the subject,
     constrained to max 3 topics per day.  When *skill_description* is
     provided (CASL mode), it is injected so topics align with the official
-    CASL skill description.
+    CASL skill description.  *special_requirements* adds user-specified
+    constraints to the prompt.
     """
     template = prompt_template or COURSE_TOPICS_PROMPT_TEMPLATE
     max_topics = num_days * 3
@@ -640,6 +642,13 @@ def generate_course_topics(
     else:
         skill_context = ""
         skill_guideline = ""
+    if special_requirements.strip():
+        special_req_text = (
+            f"\nSpecial Requirements (MUST be addressed in the topics):\n"
+            f"{special_requirements.strip()}\n"
+        )
+    else:
+        special_req_text = ""
     return asyncio.run(
         _generate_async(
             template,
@@ -648,6 +657,7 @@ def generate_course_topics(
             max_topics=str(max_topics),
             skill_context=skill_context,
             skill_guideline=skill_guideline,
+            special_requirements=special_req_text,
         )
     )
 
