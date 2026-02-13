@@ -175,12 +175,12 @@ if active_page == "Course Details":
             else:
                 st.warning(f"No skill description found for **{selected_skill}**. Topics will be generated based on the course title only.")
         saved_dur = st.session_state.get("saved_course_duration", 16)
-        default_days = max(1, saved_dur // 8)
+        default_days = max(1.0, float(saved_dur // 8))
         num_days_est = st.number_input(
             "No. of Days",
-            min_value=1,
+            min_value=0.5,
             value=default_days,
-            step=1,
+            step=0.5,
             key="gen_num_days",
             help="Typically 2-3 topics per day",
         )
@@ -336,7 +336,10 @@ if active_page == "Course Details":
         duration_per_topic = saved_duration * 60 / saved_num_topics
         instr_per_topic = saved_instr * 60 / saved_num_topics
         assess_per_topic = saved_assess * 60 / saved_num_topics
-        instr_per_method = saved_instr * 60 / saved_num_instr
+        import math
+        num_days = max(1, saved_duration / 8)
+        calendar_days = math.ceil(num_days)
+        instr_per_method_per_day = saved_instr * 60 / calendar_days / saved_num_instr
         assess_per_method = saved_assess * 60 / saved_num_assess if saved_num_assess > 0 else 0
 
         st.divider()
@@ -344,25 +347,25 @@ if active_page == "Course Details":
 
         summary_data = {
             "Field": [
-                "Course Duration",
+                "Total Course Duration",
                 "Number of Topics",
                 "Duration per Topic",
                 "Instructional Duration",
                 "Instructional per Topic",
                 "No. of Instructional Methods",
-                "Duration per Instructional Method",
+                "Duration per Instructional Method per Day",
                 "Assessment Duration",
                 "No. of Assessment Methods",
                 "Duration per Assessment Method",
             ],
             "Value": [
-                f"{saved_duration} hrs",
+                f"{saved_duration * 60:.0f} mins",
                 str(saved_num_topics),
                 f"{duration_per_topic:.0f} mins",
                 f"{saved_instr} hrs",
                 f"{instr_per_topic:.0f} mins",
                 str(saved_num_instr),
-                f"{instr_per_method:.0f} mins",
+                f"{instr_per_method_per_day:.0f} mins",
                 f"{saved_assess} hrs" if saved_num_assess > 0 else "N/A",
                 str(saved_num_assess),
                 f"{assess_per_method:.0f} mins" if saved_num_assess > 0 else "N/A",
